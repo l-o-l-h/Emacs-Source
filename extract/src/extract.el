@@ -1,5 +1,5 @@
 ;;; extract.el -- Extract parts of a pdf into separate files -*- mode: elisp; -*-
-;;; Time-stamp: <2024-02-27 15:39:55 minilolh>
+;;; Time-stamp: <2024-03-03 09:54:46 lolh-mbp-16>
 
 ;;; Commentary:
 ;; Given a pdf, such as complaint.pdf, extract the different parts,

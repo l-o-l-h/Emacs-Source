@@ -1,6 +1,6 @@
 ;;; case-utils.el -- Utility Files for Working With Cases -*- mode:elisp; lexical-binding: t; -*-
 ;;;
-;;; Time-stamp: <2024-03-01 23:37:27 minilolh>
+;;; Time-stamp: <2024-03-03 09:54:21 lolh-mbp-16>
 
 ;;; Date: 2024-02-28
 
@@ -241,6 +241,6 @@ RETURN:
 
             gd-files))))
 
-(provide 'lolh/case-utils)
+(provide 'case-utils)
 
 ;;; End case-utils
