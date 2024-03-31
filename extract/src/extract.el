@@ -1,11 +1,12 @@
 ;;; extract.el - Attach files -*- mode: elisp -*-
-;;; Time-stamp: <2024-03-31 09:25:09 lolh-mbp-16>
-;;; Version 0.1 [2024-03-26 13:35:18]
+;;; Time-stamp: <2024-03-31 09:28:12 lolh-mbp-16>
+;;; Version 0.1.1 [2024-03-31 09:25:09]
 
 ;;; Commentary:
 
 ;; 1. Attach Court File PDFs to a Case Note
 ;; 2. Extract PDFs from Complaint and attach to Exhibits
+;; 3. Update PDFs
 
 ;;; Code:
 
