@@ -1,5 +1,5 @@
 ;;; extract.el - Attach files -*- mode: elisp -*-
-;;; Time-stamp: <2024-03-26 13:38:54 lolh-mbp-16>
+;;; Time-stamp: <2024-03-31 09:25:09 lolh-mbp-16>
 ;;; Version 0.1 [2024-03-26 13:35:18]
 
 ;;; Commentary:
@@ -20,7 +20,7 @@
 (defconst *lolh/props-re*
   "^\\(.*[[:space:]]\\[\\([[:digit:]-]+\\)\\]\\)[[:space:]]\\([[:digit:]]+\\)[[:space:]]\\([[:digit:]]+\\)$")
 (defconst *lolh/exhibit-or-source-re*
-  "^EXHIBIT-[[:digit:]]\\|^SOURCE")
+  "^EXHIBIT-[[:alnum:]]\\|^SOURCE")
 
 (defvar *lolh/note-tree*)
 
@@ -55,11 +55,8 @@ An example would be all documents in the Court File for a case."
   (interactive)
   (lolh/note-tree)
 
-  (let* ((court-file-attach-dir (file-name-as-directory
-                                 (file-name-concat
-                                  (lolh/attach-dir)
-                                  subdir))) ; e.g. "Court File"
-         (gd-court-file-dir (lolh/gd-dir subdir)) ; e.g. "Court File"
+  (let* ((court-file-attach-dir (lolh/attach-dir subdir)) ; e.g. "Court File"
+         (gd-court-file-dir (lolh/gd-cause-dir subdir)) ; e.g. "Court File"
          (cause (lolh/cause)))        ; e.g. "COURT FILES"
     (lolh/set-note-property-in-headline hl "DIR" court-file-attach-dir)
     (mapc (lambda (f) (org-attach-attach f nil 'lns))
@@ -114,13 +111,10 @@ An example would be all documents in the Court File for a case."
             exs)
 
       (lolh/set-note-property-in-headline "EXHIBITS" "DIR"
-                                          (file-name-as-directory
-                                           (file-name-concat
-                                            (lolh/attach-dir)
-                                            "Notices & Lease")))
+                                          (lolh/attach-dir "Notices & Lease"))
       ;; Move the extracted documents into their home and then attach them
       (mapc (lambda (ex)
-              (let ((dest-dir (file-name-concat (lolh/gd-dir "Notices & Lease")
+              (let ((dest-dir (file-name-concat (lolh/gd-cause-dir "Notices & Lease")
                                                 (file-name-nondirectory ex))))
                 (rename-file ex dest-dir t)
                 (org-attach-attach dest-dir nil 'lns)))
@@ -137,23 +131,29 @@ and date for any new files not yet in the Google Drive.
 
 This command will add the starred files to the Google Drive using the correct
 case name, and will then ask for the file name for the remaining files and
-also place them into the Google Drive."
+also place them into the Google Drive.
+
+All new files will be sym-linked into the attachment directory."
 
   (interactive)
   (lolh/note-tree)
   (let* ((cause (lolh/cause))
-         (court-file (lolh/gd-dir "Court File"))
+         (attach-dir (lolh/attach-dir "Court File"))
+         (court-file (lolh/gd-cause-dir "Court File"))
          (pleadings (directory-files court-file nil "[[:digit:]]+[*])"))
          (new-files (directory-files *lolh/process-dir* nil
                                      directory-files-no-dot-files-regexp)))
+    ;; Rename files with * to final names without *
     (mapc (lambda (pleading)
+            ;; TODO: Use Let* instead of Setq here
             (setq old-dir (file-name-concat court-file pleading)) ; file to be deleted
+            ;; file in attachment dir with asterisk that is to be deleted
+            (setq new-attach-dir (file-name-concat attach-dir pleading))
             (string-match "^[[:digit:]]+" pleading) ; find the docket number
             (setq f (match-string 0 pleading))      ; docket number
             ;; find the new file with the same docket number
             (setq new-pleading (seq-find (lambda (a) (string-match-p f a)) new-files nil))
             ;; give the new file name a full path in the Process dir
-            (unless new-pleading (message "The newest pleading %s" pleading))
             (setq new-pleading-dir (file-name-concat *lolh/process-dir* new-pleading))
             ;; create the new file name without an asterisk
             (setq p-new (format "%s%s" (substring pleading 0 2) (substring pleading 3)))
@@ -161,12 +161,20 @@ also place them into the Google Drive."
             (setq new-dir (file-name-concat court-file p-new))
 
             (rename-file new-pleading-dir new-dir)
-            (delete-file old-dir))
+            ;; attach new-dir
+            (make-symbolic-link new-dir attach-dir)
+
+            ;; delete the old files
+            (delete-file old-dir)
+            (delete-file new-attach-dir))
           pleadings)
+
+    ;; Add new files, with or without *
     (let* ((new-pleadings (directory-files *lolh/process-dir* nil directory-files-no-dot-files-regexp))
            (new-pleadings (seq-remove (lambda (f) (string= ".DS_Store" f)) new-pleadings))
            (cause (lolh/cause))
            (def-1 (lolh/note-property "DEF-1")))
+      ;; Make sure defendant's name is "First [M.|Middle] Last"
       (unless (string-match "^\\([^[:space:]]+\\).*[[:space:]]\\([^[:space:]]+\\)$" def-1)
         (error "Name \"%s\" appears to be malformed." def-1))
       (let* ((first-name (match-string 1 def-1))
@@ -176,13 +184,16 @@ also place them into the Google Drive."
         (message "Name: %s\n" name)
         (mapc (lambda (f)
                 (setq f-dir (file-name-concat *lolh/process-dir* f))
+                ;; find the docket number and date of new files
                 (string-match "^\\([[:digit:]*]+)\\)[[:space:]]\\([[:digit:][-]+]\\)\\.pdf$" f)
                 (let* ((docket (match-string 1 f))
                        (date (match-string 2 f))
                        (new-str (format "%s %s %s %s" docket cause date name)))
                   (setq new-name (read-string new-str))
                   (setq new-full-name-dir (file-name-concat court-file (format "%s%s.pdf" new-str new-name)))
-                  (rename-file f-dir new-full-name-dir)))
+                  (rename-file f-dir new-full-name-dir)
+                  ;; attach new-full-name-dir
+                  (make-symbolic-link new-full-name-dir attach-dir)))
               new-pleadings)))))
 
 
@@ -204,24 +215,16 @@ The GOOGLE_DRIVE environment variables must be set and named correctly."
       (error "Year %s did not return a value" year)))
 
 
-(defun lolh/gd-cause-dir ()
-  "Return the path of the Google Drive Year for CAUSE of current case note."
+(defun lolh/gd-cause-dir (&optional subdir)
+  "Return the path of the Google Drive Year for CAUSE of current case note.
+
+If optional argument SUBDIR is present, add it as a component."
 
   (let* ((cause (lolh/cause))
          (cause-year (format "20%s" (substring cause 0 2)))
          (gd-url (lolh/gd-year cause-year))
          (gd-cause-dir (car (directory-files gd-url t cause))))
-    (file-name-as-directory gd-cause-dir)))
-
-
-(defun lolh/gd-dir (dir)
-  "Return the path of the DIR in the Google Drive for the current case note.
-
-For example, `Court File' or `Notices & Lease'."
-
-  (let* ((gd-cause-dir (lolh/gd-cause-dir))
-         (gd-dir-url (car (directory-files gd-cause-dir t dir))))
-    (file-name-as-directory gd-dir-url)))
+    (file-name-as-directory (file-name-concat gd-cause-dir subdir))))
 
 
 (defun lolh/gd-source-url (source dir)
@@ -229,7 +232,7 @@ For example, `Court File' or `Notices & Lease'."
 
 E.g., a Complaint"
 
-  (let* ((gd-court-url (lolh/gd-dir dir))
+  (let* ((gd-court-url (lolh/gd-cause-dir dir))
          (gd-source-url (car (directory-files gd-court-url t source))))
     (or gd-source-url (error "Could not find the source: %s" source))))
 
@@ -292,12 +295,14 @@ Return NIL if there is no PROPERTY."
   (lolh/note-tree))
 
 
-(defun lolh/attach-dir ()
+(defun lolh/attach-dir (&optional dir)
   "Return a path to the local parent attachment directory for a case file.
 
 Point must be in the note for which the attachment directory is associated.
 The path will look something like:
-~/path-to/notes/ccvlp/cases/data/24-2-99999-06 John Smith/"
+~/path-to/notes/ccvlp/cases/data/24-2-99999-06 John Smith/
+
+The optional argument DIR is added as a final path if it is included."
 
   (let* ((parent-dir (abbreviate-file-name
                       (file-name-parent-directory (buffer-file-name))))
@@ -305,7 +310,7 @@ The path will look something like:
          (def1 (lolh/note-property  "DEF-1"))
          (attach-dir (file-name-as-directory
                       (file-name-concat
-                       parent-dir "data" (format "%s %s" cause def1)))))
+                       parent-dir "data" (format "%s %s" cause def1) dir))))
     attach-dir))
 
 
