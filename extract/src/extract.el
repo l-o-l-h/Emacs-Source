@@ -1,5 +1,5 @@
 ;;; extract.el - Attach files -*- mode: elisp -*-
-;;; Time-stamp: <2024-04-01 19:29:13 minilolh>
+;;; Time-stamp: <2024-04-01 22:05:38 minilolh>
 ;;; Version 0.1.1 [2024-03-31 09:25:09]
 
 ;;; Commentary:
@@ -18,8 +18,12 @@
   (expand-file-name "~/Downloads/process"))
 (defconst *lolh/pdftk-jar-path*
   (expand-file-name "~/.local/share/bin/pdftk-all.jar"))
+(defconst *lolh/first-last-name-re*
+  "^\\([^[:space:]]+\\).*[[:space:]]\\([^[:space:]]+\\)$")
+(defconst *lolh/docket-date-re*
+  "^\\([[:digit:]*]+)\\)[[:space:]]\\([[:digit:][-]+]\\)\\.pdf$")
 (defconst *lolh/props-re*
-  "^\\(.*[[:space:]]\\[\\([[:digit:]-]+\\)\\]\\)[[:space:]]\\([[:digit:]]+\\)[[:space:]]\\([[:digit:]]+\\)$")
+  "^\\(.*\\)[[:space:]]\\(\\[[[:digit:]-]+\\]\\)[[:space:]]\\([[:digit:]]+\\)[[:space:]]\\([[:digit:]]+\\)$")
 (defconst *lolh/exhibit-or-source-re*
   "^EXHIBIT-[[:alnum:]]\\|^SOURCE")
 
@@ -68,16 +72,19 @@ An example would be all documents in the Court File for a case."
   (interactive)
   (lolh/note-tree)
   ;; first get data from the note buffer
-  (let* ((nps (lolh/extract-properties))
+  (let* ((cause (lolh/cause))
+         (name (lolh/first-last-name))
+         (nps (lolh/extract-properties))
          ;; find the identity of the document to extract from
          (source (assoc "SOURCE" nps))
          ;; find the list of document data to extract
-         (exs (assoc-delete-all "SOURCE" (copy-alist nps))))
+         (exs (assoc-delete-all "SOURCE" (copy-alist nps)))
+         (attach-dir (lolh/attach-dir "Notices & Lease")))
 
     (when nps ; don't process if nps is nil (no note properties found)
       ;; copy the source into ~/Downloads/process directory
-      (setq complaint (file-name-concat *lolh/process-dir* "complaint.pdf"))
-      (let ((src (lolh/gd-source-url (cdr source) "Court File")))
+      (let ((complaint (file-name-concat *lolh/process-dir* "complaint.pdf"))
+            (src (lolh/gd-source-url (cdr source) "Court File")))
         (copy-file src complaint t))
 
       ;; map over the plist of document data to extract
@@ -95,12 +102,13 @@ An example would be all documents in the Court File for a case."
                               (error "Improper format found: %s" val))))
 
                 (let* ((type (cdr (assq :type props)))
+                       (date (cdr (assq :date props)))
                        (beg-end (format "%s-%s"
                                         (cdr (assq :beg props))
                                         (cdr (assq :end props))))
                        (output-name (expand-file-name
                                      (file-name-concat
-                                      *lolh/process-dir* (format "%s--%s.pdf" key type)))))
+                                      *lolh/process-dir* (format "%s %s %s%s--%s.pdf" cause date name key type)))))
 
                   (call-process-shell-command
                    (combine-and-quote-strings
@@ -141,65 +149,57 @@ All new files will be sym-linked into the attachment directory."
   (let* ((cause (lolh/cause))
          (attach-dir (lolh/attach-dir "Court File"))
          (court-file (lolh/gd-cause-dir "Court File"))
+         ;; Find the old files in the Google Drive (those with *s)
          (pleadings (directory-files court-file nil "[[:digit:]]+[*])"))
          (new-files (directory-files *lolh/process-dir* nil
                                      directory-files-no-dot-files-regexp)))
     ;; Rename files with * to final names without *
     (mapc (lambda (pleading)
-            ;; TODO: Use Let* instead of Setq here
-            (setq old-dir (file-name-concat court-file pleading)) ; file to be deleted
-            ;; file in attachment dir with asterisk that is to be deleted
-            (setq new-attach-dir (file-name-concat attach-dir pleading))
-            (string-match "^[[:digit:]]+" pleading) ; find the docket number
-            (setq f (match-string 0 pleading))      ; docket number
-            ;; find the new file with the same docket number
-            (setq new-pleading (seq-find (lambda (a) (string-match-p f a)) new-files nil))
-            ;; give the new file name a full path in the Process dir
-            (setq new-pleading-dir (file-name-concat *lolh/process-dir* new-pleading))
-            ;; create the new file name without an asterisk
-            (setq p-new (format "%s%s" (substring pleading 0 2) (substring pleading 3)))
-            ;; give the new name a full path in the Google Drive
-            (setq new-dir (file-name-concat court-file p-new))
+            (unless
+                (string-match "^[[:digit:]]+" pleading)
+              (error "Something is wrong with %" pleading)) ; find the docket number
+            (let* ((f (match-string 0 pleading)) ; docket number
+                   (old-dir (file-name-concat court-file pleading)) ; file to be deleted
+                   ;; file in attachment dir with asterisk that is to be deletednnn
+                   (new-attach-dir (file-name-concat attach-dir pleading))
+                   ;; find the new file with the same docket number
+                   (new-pleading (seq-find (lambda (a) (string-match-p f a)) new-files nil))
+                   ;; give the new file name a full path in the Process dir
+                   (new-pleading-dir (file-name-concat *lolh/process-dir* new-pleading))
+                   ;; create the new file name without an asterisk
+                   (p-new (format "%s%s" (substring pleading 0 2) (substring pleading 3)))
+                   ;; give the new name a full path in the Google Drive
+                   (new-dir (file-name-concat court-file p-new)))
+              (rename-file new-pleading-dir new-dir)
+              ;; attach new-dir
+              (make-symbolic-link new-dir attach-dir)
 
-            (rename-file new-pleading-dir new-dir)
-            ;; attach new-dir
-            (make-symbolic-link new-dir attach-dir)
-
-            ;; delete the old files
-            (delete-file old-dir)
-            (delete-file new-attach-dir))
+              ;; delete the old files
+              (delete-file old-dir)
+              (delete-file new-attach-dir)))
           pleadings)
 
-    ;; Add new files, with or without *
+    ;; Add new files, with and without *
     (let* ((new-pleadings (directory-files *lolh/process-dir* nil directory-files-no-dot-files-regexp))
            (new-pleadings (seq-remove (lambda (f) (string= ".DS_Store" f)) new-pleadings))
-           (cause (lolh/cause))
-           (def-1 (lolh/note-property "DEF-1")))
-      ;; Make sure defendant's name is "First [M.|Middle] Last"
-      (unless (string-match "^\\([^[:space:]]+\\).*[[:space:]]\\([^[:space:]]+\\)$" def-1)
-        (error "Name \"%s\" appears to be malformed." def-1))
-      (let* ((first-name (match-string 1 def-1))
-             (last-name (upcase (match-string 2 def-1)))
-             (name (format "%s,%s -- " last-name first-name)))
-        (message "New pleadings left: %s" new-pleadings)
-        (message "Name: %s\n" name)
-        (mapc (lambda (f)
-                (setq f-dir (file-name-concat *lolh/process-dir* f))
-                ;; find the docket number and date of new files
-                (string-match "^\\([[:digit:]*]+)\\)[[:space:]]\\([[:digit:][-]+]\\)\\.pdf$" f)
-                (let* ((docket (match-string 1 f))
-                       (date (match-string 2 f))
-                       (new-str (format "%s %s %s %s" docket cause date name)))
-                  (setq new-name (read-string new-str))
-                  (setq new-full-name-dir (file-name-concat court-file (format "%s%s.pdf" new-str new-name)))
-                  (rename-file f-dir new-full-name-dir)
-                  ;; attach new-full-name-dir
-                  (make-symbolic-link new-full-name-dir attach-dir)))
-              new-pleadings)))))
+           (name (lolh/first-last-name)))
+      (mapc (lambda (f)
+              ;; find the docket number and date of new files
+              (unless (string-match *lolh/docket-date-re* f)
+                (error "Something is wrong with %s" f))
+              (let* ((docket (match-string 1 f))
+                     (date (match-string 2 f))
+                     (new-str (format "%s %s %s %s" docket cause date name))
+                     (new-name (read-string new-str))
+                     (new-full-name-dir (file-name-concat court-file (format "%s%s.pdf" new-str new-name)))
+                     (f-dir (file-name-concat *lolh/process-dir* f)))
+                (rename-file f-dir new-full-name-dir)
+                ;; attach new-full-name-dir
+                (make-symbolic-link new-full-name-dir attach-dir-file)))
+            new-pleadings))))
 
 
 ;;;===================================================================
-
 
 
 (defun lolh/gd-year (year)
@@ -294,6 +294,25 @@ Return NIL if there is no PROPERTY."
       (goto-char begin)
       (org-entry-put begin new-property new-value)))
   (lolh/note-tree))
+
+
+(defun lolh/first-last-name ()
+  "Return the parsed first and last name for DEF-1."
+  (let ((def-1 (lolh/note-property "DEF-1")))
+    (unless (string-match *lolh/first-last-name-re* def-1)
+      (error "Name \"%s\" appears to be malformed." def-1))
+    (let* ((first-name (match-string 1 def-1))
+           (last-name (upcase (match-string 2 def-1)))
+           (name (format "%s,%s -- " last-name first-name)))
+      name)))
+
+
+(defun lolh/note-date-name (date name)
+  "Return a file name with cause-date-name."
+
+  (let ((cause (lolh/note-property "CAUSE"))
+        (def-1 (lolh/note-property "DEF-1")))
+    (format "%s [%s] %s -- %s" cause date def-1 name)))
 
 
 (defun lolh/attach-dir (&optional dir)
