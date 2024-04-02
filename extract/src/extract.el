@@ -1,5 +1,5 @@
 ;;; extract.el - Attach files -*- mode: elisp -*-
-;;; Time-stamp: <2024-03-31 09:28:12 lolh-mbp-16>
+;;; Time-stamp: <2024-04-01 19:29:13 minilolh>
 ;;; Version 0.1.1 [2024-03-31 09:25:09]
 
 ;;; Commentary:
@@ -15,9 +15,9 @@
 (require 'org-attach)
 
 (defconst *lolh/process-dir*
-  "~/Downloads/process")
+  (expand-file-name "~/Downloads/process"))
 (defconst *lolh/pdftk-jar-path*
-  "/Users/lolh-mbp-16/.local/share/bin/pdftk-all.jar")
+  (expand-file-name "~/.local/share/bin/pdftk-all.jar"))
 (defconst *lolh/props-re*
   "^\\(.*[[:space:]]\\[\\([[:digit:]-]+\\)\\]\\)[[:space:]]\\([[:digit:]]+\\)[[:space:]]\\([[:digit:]]+\\)$")
 (defconst *lolh/exhibit-or-source-re*
