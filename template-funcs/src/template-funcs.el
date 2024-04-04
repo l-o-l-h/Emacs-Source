@@ -1,5 +1,5 @@
 ;;; template-funcs.el -- Template Functions -*- mode: elisp; -*-
-;;; Time-stamp: <2024-03-02 19:37:48 lolh-mbp-16>
+;;; Time-stamp: <2024-04-02 09:07:30 minilolh>
 
 ;;; Commentary:
 ;;; Provide functions for the denote-templates function.
@@ -31,9 +31,10 @@
    ":CITIZEN:\t--\n"
    ":ADULTS:\t--\n"
    ":CHILDREN:\t--\n"
-   ":END:\n\n\n"
-   "* CASES\n\n\n"
-   "* RTC INTERVIEW\n\n\n"))
+   ":END:\n\n"
+   "* CASES\n\n"
+   "* CURRENT\n\n"
+   "** RTC INTERVIEW\n\n"))
 
 (defun newcase ()
   "Create a new Denote note for a new RTC case."
@@ -57,32 +58,34 @@
    ":APPOINT:\t--\n"
    ":NOA:\t\t--\n"
    ":LEDGER:\t--\n"
-   ":END:\n\n\n"
+   ":END:\n\n"
 
-   "** OSC\n\n\n"
-   "*** OSC-1\n\n\n"
-   "*** OSC-2\n\n\n"
-   "** DOCUMENTS\n\n\n"
-   "*** COURT FILES\n\n\n"
+   "** OSC\n\n"
+   "*** OSC-1\n\n"
+   "*** OSC-2\n\n"
+   "** DOCUMENTS\n\n"
+   "*** APPEARANCE\n\n"
+   "*** APPOINTMENT\n\n"
+   "*** COURT FILES\n\n"
    "*** EXHIBITS\n"
    ":PROPERTIES:\n"
-   ":LEASE:\t--\n"
-   ":NOTICE:\t--\n"
-   ":SERVICE:\t--\n"
-   ":END:\n\n\n"
+   ":EXHIBIT-1:\t-- Lease [date]\n"
+   ":EXHIBIT-2:\t-- Notice [date]\n"
+   ":EXHIBIT-3:\t-- Service [date]\n"
+   ":END:\n\n"
 
    "*** LEDGERS\n"
    ":PROPERTIES:\n"
-   ":LEDGER-1:\t--[DATE]\n"
-   ":LEDGER-2:\t--[DATE]\n"
-   ":END:\n\n\n"
+   ":LEDGER-1:\t-- [DATE]\n"
+   ":LEDGER-2:\t-- [DATE]\n"
+   ":END:\n\n"
 
-   "* CLIENT\n\n\n"
+   "* CLIENT\n\n"
    "* O/C\n\n"
-   "** O/C INFO\n\n\n"
-   "** O/C COMMUNICATION\n\n\n"
-   "* PLAN\n\n\n"
-   "* ISSUES\n\n\n"))
+   "** O/C INFO\n\n"
+   "** O/C COMMUNICATION\n\n"
+   "* PLAN\n\n"
+   "* ISSUES\n\n"))
 
 (defun newcase-with-newclient (case pl def cl info)
   (interactive

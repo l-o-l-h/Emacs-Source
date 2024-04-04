@@ -1,6 +1,6 @@
 ;;; extract.el - Attach files -*- mode: elisp -*-
-;;; Time-stamp: <2024-04-01 22:05:38 minilolh>
-;;; Version 0.1.1 [2024-03-31 09:25:09]
+;;; Time-stamp: <2024-04-04 09:52:33 minilolh>
+;;; Version 0.1.2 [2024-04-04 09:52]
 
 ;;; Commentary:
 
@@ -21,9 +21,9 @@
 (defconst *lolh/first-last-name-re*
   "^\\([^[:space:]]+\\).*[[:space:]]\\([^[:space:]]+\\)$")
 (defconst *lolh/docket-date-re*
-  "^\\([[:digit:]*]+)\\)[[:space:]]\\([[:digit:][-]+]\\)\\.pdf$")
+  "^\\([[:digit:]*]+\\))[[:space:]]\\([[:digit:][-]+]\\)\\.pdf$")
 (defconst *lolh/props-re*
-  "^\\(.*\\)[[:space:]]\\(\\[[[:digit:]-]+\\]\\)[[:space:]]\\([[:digit:]]+\\)[[:space:]]\\([[:digit:]]+\\)$")
+  "^\\(.*\\)[[:space:]]\\[\\([[:digit:]-]+\\)\\][[:space:]]\\([[:digit:]]+\\)[[:space:]]\\([[:digit:]]+\\)$")
 (defconst *lolh/exhibit-or-source-re*
   "^EXHIBIT-[[:alnum:]]\\|^SOURCE")
 
@@ -72,9 +72,7 @@ An example would be all documents in the Court File for a case."
   (interactive)
   (lolh/note-tree)
   ;; first get data from the note buffer
-  (let* ((cause (lolh/cause))
-         (name (lolh/first-last-name))
-         (nps (lolh/extract-properties))
+  (let* ((nps (lolh/extract-properties))
          ;; find the identity of the document to extract from
          (source (assoc "SOURCE" nps))
          ;; find the list of document data to extract
@@ -101,15 +99,16 @@ An example would be all documents in the Court File for a case."
                                       (cons :end (match-string 4 val)))
                               (error "Improper format found: %s" val))))
 
-                (let* ((type (cdr (assq :type props)))
+                (let* ((type (cdr (assq :type props))) ; e.g. Lease
                        (date (cdr (assq :date props)))
                        (beg-end (format "%s-%s"
                                         (cdr (assq :beg props))
                                         (cdr (assq :end props))))
+                       (gd-file-name (lolh/create-gd-file-name nil date (format "%s %s" key type)))
                        (output-name (expand-file-name
                                      (file-name-concat
-                                      *lolh/process-dir* (format "%s %s %s%s--%s.pdf" cause date name key type)))))
-
+                                      *lolh/process-dir* gd-file-name))))
+                  ;; pdftk / java -jar pdftk-all.jar
                   (call-process-shell-command
                    (combine-and-quote-strings
                     (list
@@ -131,6 +130,16 @@ An example would be all documents in the Court File for a case."
       (delete-file complaint))))
 
 
+(defun lolh/add-file-to-gd (file dest)
+  "Place a FILE found in *lolh/process-dir* into DEST in the Google Drive.
+
+Also attach it."
+
+  (interactive)
+
+  (let ((new-name (lolh/create-gd-file-name nil )))))
+
+
 (defun lolh/update-pleadings ()
   "Update attachment documents for case note.
 
@@ -146,8 +155,7 @@ All new files will be sym-linked into the attachment directory."
 
   (interactive)
   (lolh/note-tree)
-  (let* ((cause (lolh/cause))
-         (attach-dir (lolh/attach-dir "Court File"))
+  (let* ((attach-dir (lolh/attach-dir "Court File"))
          (court-file (lolh/gd-cause-dir "Court File"))
          ;; Find the old files in the Google Drive (those with *s)
          (pleadings (directory-files court-file nil "[[:digit:]]+[*])"))
@@ -178,21 +186,21 @@ All new files will be sym-linked into the attachment directory."
               (delete-file old-dir)
               (delete-file new-attach-dir)))
           pleadings)
-
     ;; Add new files, with and without *
     (let* ((new-pleadings (directory-files *lolh/process-dir* nil directory-files-no-dot-files-regexp))
-           (new-pleadings (seq-remove (lambda (f) (string= ".DS_Store" f)) new-pleadings))
-           (name (lolh/first-last-name)))
+           (new-pleadings (seq-remove (lambda (f) (string= ".DS_Store" f)) new-pleadings)))
       (mapc (lambda (f)
               ;; find the docket number and date of new files
               (unless (string-match *lolh/docket-date-re* f)
                 (error "Something is wrong with %s" f))
-              (let* ((docket (match-string 1 f))
-                     (date (match-string 2 f))
-                     (new-str (format "%s %s %s %s" docket cause date name))
+              (let* ((f-dir (file-name-concat *lolh/process-dir* f))
+                     (docket (match-string 1 f))
+                     (date (string-trim (match-string 2 f) "\\[" "\\]"))
+                     (new-str (concat (lolh/create-gd-file-name docket date) "? "))
                      (new-name (read-string new-str))
-                     (new-full-name-dir (file-name-concat court-file (format "%s%s.pdf" new-str new-name)))
-                     (f-dir (file-name-concat *lolh/process-dir* f)))
+                     (new-full-name (lolh/create-gd-file-name docket date new-name))
+                     (new-full-name-dir (file-name-concat court-file new-full-name))
+                     (attach-dir-file (file-name-concat attach-dir new-full-name)))
                 (rename-file f-dir new-full-name-dir)
                 ;; attach new-full-name-dir
                 (make-symbolic-link new-full-name-dir attach-dir-file)))
@@ -296,17 +304,6 @@ Return NIL if there is no PROPERTY."
   (lolh/note-tree))
 
 
-(defun lolh/first-last-name ()
-  "Return the parsed first and last name for DEF-1."
-  (let ((def-1 (lolh/note-property "DEF-1")))
-    (unless (string-match *lolh/first-last-name-re* def-1)
-      (error "Name \"%s\" appears to be malformed." def-1))
-    (let* ((first-name (match-string 1 def-1))
-           (last-name (upcase (match-string 2 def-1)))
-           (name (format "%s,%s -- " last-name first-name)))
-      name)))
-
-
 (defun lolh/note-date-name (date name)
   "Return a file name with cause-date-name."
 
@@ -380,6 +377,32 @@ If FILTER is set to a regexp, attach the matched files."
   (dired-unmark-all-marks)
   (delete-window))
 
+
+(defun lolh/first-last-name ()
+  "Return the parsed first and last name for DEF-1."
+  (let ((def-1 (lolh/note-property "DEF-1")))
+    (unless (string-match *lolh/first-last-name-re* def-1)
+      (error "Name \"%s\" appears to be malformed." def-1))
+    (let* ((first-name (match-string 1 def-1))
+           (last-name (upcase (match-string 2 def-1)))
+           (name (format "%s,%s -- " last-name first-name)))
+      name)))
+
+
+(defun lolh/create-gd-file-name (&optional docket date body)
+  "With point in a note, return a file name with DOCKET, DATE, and BODY.
+
+Use an empty string for any missing arguments."
+
+  (let* ((docket (if docket (format "%s) " docket) ""))
+         (date (or date "yyyy-mm-dd"))
+         (body (or body "Need File Name"))
+         (cause (lolh/cause))
+         (def-1 (lolh/note-property "DEF-1"))
+         (def-2 (lolh/note-property "DEF-2"))
+         (last-first-1 (lolh/create-first-last def-1))
+         (last-first-2 (lolh/create-first-last def-2)))
+    (format "%s%s [%s] %s%s -- %s.pdf" docket cause date last-first-1 (format "%s" (if last-first-2 (concat "-" last-first-2) "")) body)))
 
 (provide 'extract)
 
