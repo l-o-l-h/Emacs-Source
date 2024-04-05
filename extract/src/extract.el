@@ -1,6 +1,6 @@
 ;;; extract.el - Attach files -*- mode: elisp -*-
-;;; Time-stamp: <2024-04-05 07:40:01 minilolh>
-;;; Version 0.1.3 [2024-04-04 16:45]
+;;; Time-stamp: <2024-04-05 11:29:06 minilolh>
+;;; Version 0.1.4 [2024-04-05 11:28]
 
 ;;; Commentary:
 
@@ -72,7 +72,10 @@
          (cause (lolh/cause)))        ; e.g. "COURT FILES"
     (lolh/set-note-property-in-headline hl "DIR" court-file-attach-dir)
     (mapc (lambda (f) (org-attach-attach f nil 'lns))
-          (directory-files gd-court-file-dir :full directory-files-no-dot-files-regexp))))
+          (seq-remove
+           (lambda (f)
+             (string-match-p ".DS_Store" f))
+           (directory-files gd-court-file-dir :full directory-files-no-dot-files-regexp)))))
 
 
 (defun lolh/extract-pdfs ()
@@ -167,7 +170,17 @@
          ;; Find the old files in the Google Drive (those with *s)
          (pleadings (directory-files court-file nil "[[:digit:]]+[*])"))
          (new-files (directory-files *lolh/process-dir* nil
-                                     directory-files-no-dot-files-regexp)))
+                                     directory-files-no-dot-files-regexp))
+         ;; Keep only new files with the same docket number to be renamed
+         (keep-pleadings (seq-keep (lambda (f)
+                                     ;; compare docket numbers and keep if they are equal
+                                     (seq-find (lambda (p) (string= (substring f 0 2)
+                                                                    (substring p 0 2)))
+                                               pleadings))
+                                   ;; Grab all of the new pleadings in process-dir
+                                   ;; but keep only those with equal docket numbers for now
+                                   (directory-files *lolh/process-dir* nil
+                                                    directory-files-no-dot-files-regexp))))
     ;; Rename files with * to final names without *
     (mapc (lambda (pleading)
             (unless
@@ -175,7 +188,7 @@
               (error "Something is wrong with %" pleading)) ; find the docket number
             (let* ((f (match-string 0 pleading)) ; docket number
                    (old-dir (file-name-concat court-file pleading)) ; file to be deleted
-                   ;; file in attachment dir with asterisk that is to be deletednnn
+                   ;; file in attachment dir with asterisk that is to be deleted
                    (new-attach-dir (file-name-concat attach-dir pleading))
                    ;; find the new file with the same docket number
                    (new-pleading (seq-find (lambda (a) (string-match-p f a)) new-files nil))
@@ -192,7 +205,8 @@
               ;; delete the old files
               (delete-file old-dir)
               (delete-file new-attach-dir)))
-          pleadings)
+          keep-pleadings)
+
     ;; Add new files, with and without *
     (let* ((new-pleadings (directory-files *lolh/process-dir* nil directory-files-no-dot-files-regexp))
            (new-pleadings (seq-remove (lambda (f) (string= ".DS_Store" f)) new-pleadings)))
@@ -200,14 +214,14 @@
               ;; find the docket number and date of new files
               (unless (string-match *lolh/docket-date-re* f)
                 (error "Something is wrong with %s" f))
-              (let* ((f-dir (file-name-concat *lolh/process-dir* f))
-                     (docket (match-string 1 f))
+              (let* ((docket (match-string 1 f))
                      (date (string-trim (match-string 2 f) "\\[" "\\]"))
+                     (f-dir (file-name-concat *lolh/process-dir* f)) ; full path to file to be renamed
                      (new-str (concat (lolh/create-gd-file-name docket date) "? "))
-                     (new-name (read-string new-str))
-                     (new-full-name (lolh/create-gd-file-name docket date new-name))
-                     (new-full-name-dir (file-name-concat court-file new-full-name))
-                     (attach-dir-file (file-name-concat attach-dir new-full-name)))
+                     (new-name (read-string new-str)) ; ask for the file name
+                     (new-full-name (lolh/create-gd-file-name docket date new-name)) ; add the other parts
+                     (new-full-name-dir (file-name-concat court-file new-full-name)) ; give it a path
+                     (attach-dir-file (file-name-concat attach-dir new-full-name))) ; get the symlink name
                 (rename-file f-dir new-full-name-dir)
                 ;; attach new-full-name-dir
                 (make-symbolic-link new-full-name-dir attach-dir-file)))
@@ -431,29 +445,60 @@ Use an empty string for any missing arguments."
 -----------------------------------------------------------------------
 
 
-(defun lolh/process-dir (&optional body)
-  "Run through all files in *lolh/process-dir* and rename them.
+(defun lolh/process-dir (dest &optional body-p)
+  "Move all files in process-dir and rename them using DEST as the GD directory.
 
-If BODY is non-nil, then request an additional name for each file."
+If BODY-P is 4 (1 numeric prefix), then request an additional name for
+each file.
+If BODY-P is 16 (2 numeric prefixes), then request an attachment heading
+and  attach the files to the supplied headline."
 
-  (interactive)
+  (interactive "sDestination? \np")
 
   (let ((files (directory-files *lolh/process-dir* nil "^[^.]"))
-        new-files)
-    (dolist (f files new-files)
-      (let* ((body (when body (read-string (concat f "? "))))
-             (nf (lolh/create-gd-file-name-2 f (if (string= "" body) nil body))))
-        (push nf new-files)))))
+        (body (if (and (numberp body-p)
+                       (>= body-p 4 ))
+                  t nil))
+        (attach (if (and (numberp body-p)
+                         (> body-p 4))
+                    (read-string "Attachment Heading? ")
+                  nil))
+        (destination (lolh/gd-cause-dir dest))
+        old-files new-files)
+    (dolist (f files)
+      (let* ((body (when body (read-string (concat f " File Name? "))))
+             (nf (file-name-concat
+                  destination
+                  (lolh/create-gd-file-name-2 f (if (string= "" body) nil body))))
+             (of (file-name-concat *lolh/process-dir* f)))
+        (push nf new-files)
+        (push of old-files)))
+    (lolh/send-to-gd-and-maybe-attach old-files new-files attach)))
+
+(defun lolh/send-to-gd-and-maybe-attach (old-files new-files &optional attach)
+  "Send the OLD-FILES to DEST as NEW-FILES and attach if ATTACH gives a headline.
+
+ATTACH should name a real headline under which the new files should be symlinked."
+
+  (let ((attach-dir (when attach
+                      (lolh/attach-dir attach))))
+    (when (and attach-dir
+               (not (lolh/note-property "DIR" attach)))
+      (lolh/set-note-property-in-headline attach "DIR" attach-dir))
+    (mapcar (lambda (o n)
+              (rename-file o n t)
+              (when attach
+                (f-symlink n attach-dir)))
+            old-files new-files)))
 
 
 (defun lolh/create-gd-file-name-2 (file-name &optional body)
   "Given a FILE-NAME from *lolh/process-dir* and a note, create new file-name with optional BODY."
 
   (let* ((ex (lolh/extract-docket-date-name file-name))
-         (body (when body (concat body " "))) ; BODY can be nil and will be ignore
          (docket (lolh/get-extracted ex :docket)) ; DOCKET can be nil and will be ignored
          (date (or (lolh/get-extracted ex :date) "YYYY-MM-DD")) ; DATE can be nil; YYYY-MM-DD will be substituted
-         (name (lolh/get-extracted ex :name)) ; NAME can be empty string; () will be inserted
+         (name (lolh/get-extracted ex :name)) ; NAME can be nil;
          (cause (lolh/cause))                 ; CAUSE must exist
          (def-1 (lolh/note-property "DEF-1")) ; DEF-1 must exist
          (def-2 (lolh/note-property "DEF-2")) ; DEF-2 is optional
@@ -465,26 +510,27 @@ If BODY is non-nil, then request an additional name for each file."
             date
             last-first-1
             (format "%s" (if last-first-2 (concat "-" last-first-2) ""))
-            (or body "") name)))
+            (if body (format "%s " body) "")
+            (or name ""))))
 
 
 (defun lolh/extract-docket-date-name (file-name)
   "Extract docket, date, and name from FILE-NAME.
 
 FILE-NAME must end with either `.pdf' or `.PDF'.
-
 Returns a plist: (:docket ... :date ... :name ...)
-
-All elements are optional.  If a `name' is not supplied,
-an empty string will be returned.  Nonpresent docket or date
-will return `'nil''."
+All elements are optional.  Each returns `nil' unless something is
+supplied."
 
   (unless (string-match *lolh/docket-date-name-re* file-name)
     (error "Unable to parse file-name %s" file-name))
   (let* ((docket-space (match-string 1 file-name))
+         ;; get rid of spurious space
          (docket (when docket-space (string-trim docket-space)))
-         (date (match-string 3 file-name))
-         (name (match-string 4 file-name)))
+         (date (match-string 3 file-name)) ; does not include surrounding brackets
+         (name (match-string 4 file-name)) ; returns an empty string if not present
+         (name (if (string-empty-p name) nil name))) ; return `nil' when not present
+    ;; return a plist
     (list :docket docket :date date :name name)))
 
 (defun lolh/get-extracted (ex part)
