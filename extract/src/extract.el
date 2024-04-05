@@ -1,6 +1,6 @@
 ;;; extract.el - Attach files -*- mode: elisp -*-
-;;; Time-stamp: <2024-04-04 09:52:33 minilolh>
-;;; Version 0.1.2 [2024-04-04 09:52]
+;;; Time-stamp: <2024-04-05 07:40:01 minilolh>
+;;; Version 0.1.3 [2024-04-04 16:45]
 
 ;;; Commentary:
 
@@ -22,6 +22,13 @@
   "^\\([^[:space:]]+\\).*[[:space:]]\\([^[:space:]]+\\)$")
 (defconst *lolh/docket-date-re*
   "^\\([[:digit:]*]+\\))[[:space:]]\\([[:digit:][-]+]\\)\\.pdf$")
+(defconst *lolh/docket-date-name-re*
+  "^\\([[:digit:]*)]\\{3,4\\}[[:space:]]\\)\\{0,1\\}\\(\\[\\([[:digit:]-]\\{10\\}\\)\\]\\)\\{0,1\\}[[:space:]]?\\(.*\\)[.pPdDfF]\\{4\\}$"
+  ;;; 1                                   1           2     3                      3     2                       4    4
+  "1: Optional docket: 02*) (needs `string-trim')
+   2: Optional date including brackets: [2024-04-01]
+   3: Optional date w/out brackets: 2024-04-01
+   4: Optional name: blah")
 (defconst *lolh/props-re*
   "^\\(.*\\)[[:space:]]\\[\\([[:digit:]-]+\\)\\][[:space:]]\\([[:digit:]]+\\)[[:space:]]\\([[:digit:]]+\\)$")
 (defconst *lolh/exhibit-or-source-re*
@@ -55,7 +62,7 @@
 (defun lolh/pdf-attach (subdir hl)
   "Attach all of the Google documents from a SUBDIR to the current note HL.
 
-An example would be all documents in the Court File for a case."
+  An example would be all documents in the Court File for a case."
 
   (interactive)
   (lolh/note-tree)
@@ -133,7 +140,7 @@ An example would be all documents in the Court File for a case."
 (defun lolh/add-file-to-gd (file dest)
   "Place a FILE found in *lolh/process-dir* into DEST in the Google Drive.
 
-Also attach it."
+  Also attach it."
 
   (interactive)
 
@@ -143,15 +150,15 @@ Also attach it."
 (defun lolh/update-pleadings ()
   "Update attachment documents for case note.
 
-New documents should be downloaded from Onbase and placed into the Process
-directory with the docket number for any starred files, and the docket number
-and date for any new files not yet in the Google Drive.
+  New documents should be downloaded from Onbase and placed into the Process
+  directory with the docket number for any starred files, and the docket number
+  and date for any new files not yet in the Google Drive.
 
-This command will add the starred files to the Google Drive using the correct
-case name, and will then ask for the file name for the remaining files and
-also place them into the Google Drive.
+  This command will add the starred files to the Google Drive using the correct
+  case name, and will then ask for the file name for the remaining files and
+  also place them into the Google Drive.
 
-All new files will be sym-linked into the attachment directory."
+  All new files will be sym-linked into the attachment directory."
 
   (interactive)
   (lolh/note-tree)
@@ -389,6 +396,22 @@ If FILTER is set to a regexp, attach the matched files."
       name)))
 
 
+(defun lolh/extract-date-name (file-name &optional type)
+  "Give a FILE-NAME in *lolh/process-dir*, extract a date and a name."
+
+  (unless (string-match ".*\\[\\([[:digit:]-]+\\)\\][[:space:]]+\\(.*\\)[.pPdDfF]\\{4\\}$" file-name)
+    (error "Failed to parse the file-name: %s" file-name))
+  ;;(format "Found date: %s and name: %s" (match-string 1 file-name) (match-string 2 file-name))
+  (list :date (match-string 1 file-name) :name (format "%s(%s)" (if type (concat type " ") "") (match-string 2 file-name))))
+
+(defun lolh/extract-docket-date-name (file-name)
+  "Given a FILE-NAME, extract optional docket number, date, and name.
+
+The file-name should include the suffix .pdf or .PDF."
+
+  )
+
+
 (defun lolh/create-gd-file-name (&optional docket date body)
   "With point in a note, return a file name with DOCKET, DATE, and BODY.
 
@@ -403,6 +426,79 @@ Use an empty string for any missing arguments."
          (last-first-1 (lolh/create-first-last def-1))
          (last-first-2 (lolh/create-first-last def-2)))
     (format "%s%s [%s] %s%s -- %s.pdf" docket cause date last-first-1 (format "%s" (if last-first-2 (concat "-" last-first-2) "")) body)))
+
+
+-----------------------------------------------------------------------
+
+
+(defun lolh/process-dir (&optional body)
+  "Run through all files in *lolh/process-dir* and rename them.
+
+If BODY is non-nil, then request an additional name for each file."
+
+  (interactive)
+
+  (let ((files (directory-files *lolh/process-dir* nil "^[^.]"))
+        new-files)
+    (dolist (f files new-files)
+      (let* ((body (when body (read-string (concat f "? "))))
+             (nf (lolh/create-gd-file-name-2 f (if (string= "" body) nil body))))
+        (push nf new-files)))))
+
+
+(defun lolh/create-gd-file-name-2 (file-name &optional body)
+  "Given a FILE-NAME from *lolh/process-dir* and a note, create new file-name with optional BODY."
+
+  (let* ((ex (lolh/extract-docket-date-name file-name))
+         (body (when body (concat body " "))) ; BODY can be nil and will be ignore
+         (docket (lolh/get-extracted ex :docket)) ; DOCKET can be nil and will be ignored
+         (date (or (lolh/get-extracted ex :date) "YYYY-MM-DD")) ; DATE can be nil; YYYY-MM-DD will be substituted
+         (name (lolh/get-extracted ex :name)) ; NAME can be empty string; () will be inserted
+         (cause (lolh/cause))                 ; CAUSE must exist
+         (def-1 (lolh/note-property "DEF-1")) ; DEF-1 must exist
+         (def-2 (lolh/note-property "DEF-2")) ; DEF-2 is optional
+         (last-first-1 (lolh/create-first-last def-1))
+         (last-first-2 (lolh/create-first-last def-2)))
+    (format "%s%s [%s] %s%s -- %s(%s).pdf"
+            (if docket (concat docket " ") "")
+            cause
+            date
+            last-first-1
+            (format "%s" (if last-first-2 (concat "-" last-first-2) ""))
+            (or body "") name)))
+
+
+(defun lolh/extract-docket-date-name (file-name)
+  "Extract docket, date, and name from FILE-NAME.
+
+FILE-NAME must end with either `.pdf' or `.PDF'.
+
+Returns a plist: (:docket ... :date ... :name ...)
+
+All elements are optional.  If a `name' is not supplied,
+an empty string will be returned.  Nonpresent docket or date
+will return `'nil''."
+
+  (unless (string-match *lolh/docket-date-name-re* file-name)
+    (error "Unable to parse file-name %s" file-name))
+  (let* ((docket-space (match-string 1 file-name))
+         (docket (when docket-space (string-trim docket-space)))
+         (date (match-string 3 file-name))
+         (name (match-string 4 file-name)))
+    (list :docket docket :date date :name name)))
+
+(defun lolh/get-extracted (ex part)
+  "Given an extracted file-name EX and a PART, return the part.
+
+PART must be one of
+- 'docket
+- 'date
+- 'name"
+
+  (let ((com (car (memq part '(:docket :date :name)))))
+    (unless com
+      (error "Part: %s is invalid; it must be one of :docket, :date, or :name" part))
+    (plist-get ex com)))
 
 (provide 'extract)
 
