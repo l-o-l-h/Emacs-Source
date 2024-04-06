@@ -1,6 +1,6 @@
 ;;; extract.el - Attach files -*- mode: elisp -*-
-;;; Time-stamp: <2024-04-05 11:29:06 minilolh>
-;;; Version 0.1.4 [2024-04-05 11:28]
+;;; Time-stamp: <2024-04-05 18:24:04 minilolh>
+;;; Version 0.1.5 [2024-04-05 18:24]
 
 ;;; Commentary:
 
@@ -253,8 +253,13 @@ If optional argument SUBDIR is present, add it as a component."
   (let* ((cause (lolh/cause))
          (cause-year (format "20%s" (substring cause 0 2)))
          (gd-url (lolh/gd-year cause-year))
-         (gd-cause-dir (car (directory-files gd-url t cause))))
-    (file-name-as-directory (file-name-concat gd-cause-dir subdir))))
+         (gd-cause-dir (car (directory-files gd-url t cause)))
+         (gd-cause-sub-dir
+          (file-name-as-directory
+           (file-name-concat gd-cause-dir subdir))))
+    (unless (file-directory-p gd-cause-sub-dir)
+      (error "Directory %s does not exist" gd-cause-sub-dir))
+    gd-cause-sub-dir))
 
 
 (defun lolh/gd-source-url (source dir)
@@ -280,7 +285,8 @@ E.g., a Complaint"
 (defun lolh/put-tag-in-headline (tag headline)
   "Put a TAG into a HEADLINE."
 
-  (let* ((hl (lolh/get-headline-element headline))
+  (let* ((hl (or (lolh/get-headline-element headline)
+                 (error "Headline %s does not exist" headline)))
          (begin (org-element-property :begin hl))
          (tags (org-element-property :tags hl))
          (new-tags (push tag tags)))
@@ -318,7 +324,8 @@ Return NIL if there is no PROPERTY."
 (defun lolh/set-note-property-in-headline (headline new-property new-value)
   "Set a NEW-PROPERTY to NEW-VALUE in the property drawer found within HEADLINE."
 
-  (let ((hl (lolh/get-headline-element headline)))
+  (let ((hl (or (lolh/get-headline-element headline)
+                (error "Headline %s does not exist" headline))))
     (let  ((begin (org-element-property :begin hl)))
       (goto-char begin)
       (org-entry-put begin new-property new-value)))
@@ -333,14 +340,14 @@ Return NIL if there is no PROPERTY."
     (format "%s [%s] %s -- %s" cause date def-1 name)))
 
 
-(defun lolh/attach-dir (&optional dir)
+(defun lolh/attach-dir (&optional subdir)
   "Return a path to the local parent attachment directory for a case file.
 
 Point must be in the note for which the attachment directory is associated.
 The path will look something like:
 ~/path-to/notes/ccvlp/cases/data/24-2-99999-06 John Smith/
 
-The optional argument DIR is added as a final path if it is included."
+The optional argument SUBDIR is added as a final path if it is included."
 
   (let* ((parent-dir (abbreviate-file-name
                       (file-name-parent-directory (buffer-file-name))))
@@ -348,7 +355,7 @@ The optional argument DIR is added as a final path if it is included."
          (def1 (lolh/note-property  "DEF-1"))
          (attach-dir (file-name-as-directory
                       (file-name-concat
-                       parent-dir "data" (format "%s %s" cause def1) dir))))
+                       parent-dir "data" (format "%s %s" cause def1) subdir))))
     attach-dir))
 
 
@@ -442,62 +449,75 @@ Use an empty string for any missing arguments."
     (format "%s%s [%s] %s%s -- %s.pdf" docket cause date last-first-1 (format "%s" (if last-first-2 (concat "-" last-first-2) "")) body)))
 
 
------------------------------------------------------------------------
+;;;-------------------------------------------------------------------
 
 
 (defun lolh/process-dir (dest &optional body-p)
-  "Move all files in process-dir and rename them using DEST as the GD directory.
+  "Move all files in *lolh/process-dir* and rename in GD / DEST subdir.
 
+DEST is the name of a subdirectory, which must exist.
+Without a prefix argument, BODY-P will be 1, and thus BODY will be set to nil.
 If BODY-P is 4 (1 numeric prefix), then request an additional name for
 each file.
-If BODY-P is 16 (2 numeric prefixes), then request an attachment heading
-and  attach the files to the supplied headline."
+If BODY-P is 16 (2 numeric prefixes), then request an attachment headline
+and attach the files to the supplied headline."
 
-  (interactive "sDestination? \np")
+  (interactive "sGD Destination? \np")
 
+  (lolh/note-tree)
   (let ((files (directory-files *lolh/process-dir* nil "^[^.]"))
-        (body (if (and (numberp body-p)
-                       (>= body-p 4 ))
+        (body (if (and (numberp body-p) ; when set, ask for a body file name
+                       (= body-p 16 ))
                   t nil))
-        (attach (if (and (numberp body-p)
-                         (> body-p 4))
-                    (read-string "Attachment Heading? ")
-                  nil))
-        (destination (lolh/gd-cause-dir dest))
+        (attach-hl (if (and (numberp body-p) ;; attachment headline or nil
+                            (> body-p 4))
+                       (read-string "Attachment headline? ")
+                     nil))
+        (dest-dir (lolh/gd-cause-dir dest)) ; GD Destination directory
         old-files new-files)
     (dolist (f files)
-      (let* ((body (when body (read-string (concat f " File Name? "))))
-             (nf (file-name-concat
-                  destination
-                  (lolh/create-gd-file-name-2 f (if (string= "" body) nil body))))
-             (of (file-name-concat *lolh/process-dir* f)))
+      (let* ((body-fn (when body (read-string (concat f " File Name: ")))) ; might be nil
+             (nf (file-name-concat ; new file path
+                  dest-dir
+                  (lolh/create-gd-file-name-2 f body-fn)))
+             (of (file-name-concat *lolh/process-dir* f))) ; old file path
         (push nf new-files)
         (push of old-files)))
-    (lolh/send-to-gd-and-maybe-attach old-files new-files attach)))
+    (lolh/send-to-gd-and-maybe-attach old-files new-files dest attach-hl)))
 
-(defun lolh/send-to-gd-and-maybe-attach (old-files new-files &optional attach)
-  "Send the OLD-FILES to DEST as NEW-FILES and attach if ATTACH gives a headline.
+(defun lolh/send-to-gd-and-maybe-attach (old-files new-files dest &optional attach-hl)
+  "Send the OLD-FILES to DEST as NEW-FILES and attach if ATTACH-HL gives
+a headline.
 
-ATTACH should name a real headline under which the new files should be symlinked."
+ATTACH-HL should name a real headline under which the new files should be
+symlinked."
 
-  (let ((attach-dir (when attach
-                      (lolh/attach-dir attach))))
+  (let ((attach-dir (when attach-hl ; might be nil, meaning don't attach
+                      (lolh/attach-dir dest)))
+        n)
     (when (and attach-dir
-               (not (lolh/note-property "DIR" attach)))
-      (lolh/set-note-property-in-headline attach "DIR" attach-dir))
-    (mapcar (lambda (o n)
-              (rename-file o n t)
-              (when attach
-                (f-symlink n attach-dir)))
-            old-files new-files)))
+               (not (lolh/note-property "DIR" attach-hl)))
+      (lolh/set-note-property-in-headline attach-hl "DIR" attach-dir)
+      (lolh/put-tag-in-headline "ATTACH" attach-hl)
+      (unless (file-directory-p attach-dir)
+        (when (make-directory attach-dir)
+          (error "Directory failed to be created: %s" attach-dir))))
+    (dolist (o old-files)
+      (setf n (car new-files))
+      (rename-file o n)
+      (when attach-hl
+        (f-symlink n attach-dir))
+      (setf new-files (cdr new-files)))))
 
 
 (defun lolh/create-gd-file-name-2 (file-name &optional body)
   "Given a FILE-NAME from *lolh/process-dir* and a note, create new file-name with optional BODY."
 
   (let* ((ex (lolh/extract-docket-date-name file-name))
-         (docket (lolh/get-extracted ex :docket)) ; DOCKET can be nil and will be ignored
-         (date (or (lolh/get-extracted ex :date) "YYYY-MM-DD")) ; DATE can be nil; YYYY-MM-DD will be substituted
+         ;; DOCKET can be nil and will be ignored
+         (docket (lolh/get-extracted ex :docket))
+         ;; DATE can be nil; YYYY-MM-DD will be substituted
+         (date (or (lolh/get-extracted ex :date) "YYYY-MM-DD"))
          (name (lolh/get-extracted ex :name)) ; NAME can be nil;
          (cause (lolh/cause))                 ; CAUSE must exist
          (def-1 (lolh/note-property "DEF-1")) ; DEF-1 must exist
