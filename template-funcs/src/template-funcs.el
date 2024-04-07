@@ -1,8 +1,12 @@
-;;; template-funcs.el -- Template Functions -*- mode: elisp; -*-
-;;; Time-stamp: <2024-04-02 09:07:30 minilolh>
+;;; template-funcs.el --- Template Functions -*- mode: elisp; lexical-binding:t -*-
+;; Time-stamp: <2024-04-06 22:02:20 minilolh>
+;; Version: 0.1.0 [2024-04-06 Sat 22:00]
+
+;; Author: LOLH <lolh@lolh.com>
+;; Homepage:
 
 ;;; Commentary:
-;;; Provide functions for the denote-templates function.
+;; Provide functions for the denote-templates function.
 
 ;;; Code:
 
@@ -46,7 +50,7 @@
    ":DEPT:\t--\n"
    ":PL-1:\t--\n"
    ":PL-2:\t--\n"
-   ":APRTMNT:\t\t--\n"
+   ":APRTMNT:\t--\n"
    ":DEF-1:\t--\n"
    ":DEF-2:\t--\n"
    ":LEASE:\t--\n"
@@ -100,4 +104,4 @@
 
 (provide 'template-funcs)
 
-;;; End template-funcs.el
+;;; template-funcs.el ends here

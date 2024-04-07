@@ -1,6 +1,11 @@
-;;; extract.el - Attach files -*- mode: elisp -*-
-;;; Time-stamp: <2024-04-05 18:24:04 minilolh>
-;;; Version 0.1.5 [2024-04-05 18:24]
+;;; extract.el --- Attach files -*- mode:elisp; lexical-binding:t -*-
+;; Time-stamp: <2024-04-06 23:33:01 minilolh>
+;; Version: 0.1.5 [2024-04-05 18:24]
+;; Package-Requires: ((emacs "29.1") org-attach)
+
+;; Author: LOLH <lolh@lolh.com>
+;; Homepage:
+;; Keywords: denote
 
 ;;; Commentary:
 
@@ -245,14 +250,20 @@ The GOOGLE_DRIVE environment variables must be set and named correctly."
       (error "Year %s did not return a value" year)))
 
 
-(defun lolh/gd-cause-dir (&optional subdir)
+(defun lolh/gd-cause-dir (&optional subdir closed)
   "Return the path of the Google Drive Year for CAUSE of current case note.
 
-If optional argument SUBDIR is present, add it as a component."
+If optional argument SUBDIR is present, add it as a component.
+If optional argument CLOSED is non-nil, check the closed subdirectory."
 
   (let* ((cause (lolh/cause))
          (cause-year (format "20%s" (substring cause 0 2)))
-         (gd-url (lolh/gd-year cause-year))
+         (gd-url (let ((tmp (lolh/gd-year cause-year)))
+                   (when closed
+                     (setf tmp (file-name-concat
+                                tmp
+                                (format "00_%s_Closed_Cases" cause-year))))
+                   tmp))
          (gd-cause-dir (car (directory-files gd-url t cause)))
          (gd-cause-sub-dir
           (file-name-as-directory
@@ -270,6 +281,26 @@ E.g., a Complaint"
   (let* ((gd-court-url (lolh/gd-cause-dir dir))
          (gd-source-url (car (directory-files gd-court-url t source))))
     (or gd-source-url (error "Could not find the source: %s" source))))
+
+
+(defun lolh/note-property (property &optional hl)
+  "Return the PROPERTY from the current note TREE optionally in headline HL.
+
+Return NIL if there is no PROPERTY."
+
+  (lolh/note-tree)
+  (org-element-map *lolh/note-tree* 'node-property
+    (lambda (np) (when (string= (org-element-property :key np) property)
+                   (setq val (string-trim-left (org-element-property :value np) "-- "))
+                   (if hl
+                       (let* ((p1 (org-element-property :parent np)) ; property-drawer
+                              (p2 (org-element-property :parent p1)) ; section
+                              (p3 (org-element-property :parent p2)) ; headline
+                              (v (org-element-property :raw-value p3))
+                              (in-hl (string= v hl)))
+                         (and in-hl val))
+                     val)))
+    nil t t))
 
 
 (defun lolh/get-headline-element (headline)
@@ -294,25 +325,6 @@ E.g., a Complaint"
       (goto-char begin)
       (org-set-tags new-tags)))
   (lolh/note-tree))
-
-
-(defun lolh/note-property (property &optional hl)
-  "Return the PROPERTY from the current note TREE optionally in headline HL.
-
-Return NIL if there is no PROPERTY."
-
-  (org-element-map *lolh/note-tree* 'node-property
-    (lambda (np) (when (string= (org-element-property :key np) property)
-                   (setq val (string-trim-left (org-element-property :value np) "-- "))
-                   (if hl
-                       (let* ((p1 (org-element-property :parent np)) ; property-drawer
-                              (p2 (org-element-property :parent p1)) ; section
-                              (p3 (org-element-property :parent p2)) ; headline
-                              (v (org-element-property :raw-value p3))
-                              (in-hl (string= v hl)))
-                         (and in-hl val))
-                     val)))
-    nil t t))
 
 
 (defun lolh/cause ()
@@ -568,4 +580,4 @@ PART must be one of
 
 (provide 'extract)
 
-;;; End extract.el
+;;; extract.el ends here
