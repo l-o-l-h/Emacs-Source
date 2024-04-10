@@ -1,6 +1,6 @@
 ;;; extract.el --- Attach files -*- mode:elisp; lexical-binding:t -*-
-;; Time-stamp: <2024-04-06 23:33:01 minilolh>
-;; Version: 0.1.5 [2024-04-05 18:24]
+;; Time-stamp: <2024-04-09 19:28:05 minilolh>
+;; Version: 0.1.6 [2024-04-09 14:00]
 ;; Package-Requires: ((emacs "29.1") org-attach)
 
 ;; Author: LOLH <lolh@lolh.com>
@@ -13,11 +13,41 @@
 ;; 2. Extract PDFs from Complaint and attach to Exhibits
 ;; 3. Update PDFs
 
+
+;;; Accessors and Setters from org-element.el
+;; - ACCESSORS
+;; - `org-element-type' :: return type of element
+;; - `org-element-property' :: extract the value from the property of an e
+;; - `org-element-contents' :: extract contents from an element
+;; - `org-element-restriction' :: ??
+;; - SETTERS
+;; - `org-element-put-property' :: modifies any property of an element or object.
+;; - `org-element-set-contents' :: set element's contents to contents.
+;; - BUILD A PARSE TREE
+;; - `org-element-adopt-elements' :: insert elements after all children.
+;; - `org-element-set-element' :: replace element or object with a new element or object
+;; - `org-element-extract-element' :: remove the element from the parse tree
+;; - `org-element-insert-before' :: inserts an element before a precise location.
+;; - `org-element-create' :: create a new element of type
+;; - HELPERS
+;; - `org-element-secondary-p' :: does a given object belong to a secondary string
+;; - `org-element-class' :: is the parsed data an element or an object
+;; - `org-element-copy' ::  return a copy.
+
+
 ;;; Code:
 
 ;;;===================================================================
 
+(require 'denote)
 (require 'org-attach)
+
+(defconst *lolh/gd* "GOOGLE_DRIVE")
+;; GOOGLE_DRIVE = $HOME/Google Drive/My Drive"
+;; GOOGLE_DRIVE_2022|2023|2024 = $GOOGLE_DRIVE/Lincoln Harvey 2022|2023|2024
+;; Those values must be properly set in ~/.oh_my_zsh/custom/envvars.zsh
+(defconst *lolh/gd-closed* "Closed_Cases")
+;; Closed Cases takes the form: 00_YEAR_Closed_Cases, where YEAR tracks GOOGLE_DRIVE
 
 (defconst *lolh/process-dir*
   (expand-file-name "~/Downloads/process"))
@@ -38,6 +68,20 @@
   "^\\(.*\\)[[:space:]]\\[\\([[:digit:]-]+\\)\\][[:space:]]\\([[:digit:]]+\\)[[:space:]]\\([[:digit:]]+\\)$")
 (defconst *lolh/exhibit-or-source-re*
   "^EXHIBIT-[[:alnum:]]\\|^SOURCE")
+
+(defconst *lolh/doc-types*
+  (list
+   "COURT FILES"
+   "EXHIBITS"
+   "LEDGERS"    ; includes CHECKLIST
+   "APPEARANCE" ; includes APPOINTMENT
+   "OLD"
+   "ORDERS"
+   "PROPOSED"
+   "MOTIONS"	; includes CITATIONS
+   ))
+
+;;;-------------------------------------------------------------------
 
 (defvar *lolh/note-tree*)
 
@@ -241,13 +285,9 @@
 
 The GOOGLE_DRIVE environment variables must be set and named correctly."
 
-  (unless (and
-           (getenv "GOOGLE_DRIVE_2022")
-           (getenv "GOOGLE_DRIVE_2023")
-           (getenv "GOOGLE_DRIVE_2024"))
-    (error "Check that the google_drive environment variables are set properly"))
-  (or (getenv (concat "GOOGLE_DRIVE_" year))
-      (error "Year %s did not return a value" year)))
+  (let ((gd-year (format "%s_%s" *lolh/gd* year)))
+    (or (getenv gd-year)
+        (error "Year %s did not return a Google Drive value" year))))
 
 
 (defun lolh/gd-cause-dir (&optional subdir closed)
@@ -259,18 +299,21 @@ If optional argument CLOSED is non-nil, check the closed subdirectory."
   (let* ((cause (lolh/cause))
          (cause-year (format "20%s" (substring cause 0 2)))
          (gd-url (let ((tmp (lolh/gd-year cause-year)))
-                   (when closed
-                     (setf tmp (file-name-concat
-                                tmp
-                                (format "00_%s_Closed_Cases" cause-year))))
-                   tmp))
-         (gd-cause-dir (car (directory-files gd-url t cause)))
-         (gd-cause-sub-dir
-          (file-name-as-directory
-           (file-name-concat gd-cause-dir subdir))))
-    (unless (file-directory-p gd-cause-sub-dir)
-      (error "Directory %s does not exist" gd-cause-sub-dir))
-    gd-cause-sub-dir))
+                   (if closed
+                       (file-name-concat
+                        tmp
+                        (format "00_%s_%s" cause-year *lolh/gd-closed*))
+                     tmp)))
+         (gd-cause-dir (car (directory-files gd-url t cause))))
+    ;; 3 possibilities
+    ;; 1. Found, so return
+    ;; 2. Not found, and closed is 'nil; check the closed directory
+    ;; 3. Not found, and closed is 't; return an error message.
+    (cond
+     (gd-cause-dir (file-name-as-directory
+                    (file-name-concat gd-cause-dir subdir)))
+     (closed (error "Directory %s does not exist" gd-cause-dir))
+     (t (lolh/gd-cause-dir subdir t))))) ; recurse with closed set to 't
 
 
 (defun lolh/gd-source-url (source dir)
@@ -281,6 +324,50 @@ E.g., a Complaint"
   (let* ((gd-court-url (lolh/gd-cause-dir dir))
          (gd-source-url (car (directory-files gd-court-url t source))))
     (or gd-source-url (error "Could not find the source: %s" source))))
+
+
+(defun lolh/main-note-p (note)
+  "Predicate to test whether a NOTE is a Main note.
+
+A Main note (represented by its filename) possesses the three keywords:
+- 'case'
+- 'main'
+- 'rtc'."
+
+  (cl-subsetp '("case" "main" "rtc")
+              (denote-extract-keywords-from-path note)
+              :test #'string=))
+
+
+(defun lolh/main-note ()
+  "Find and return the path to the main note of the current note.
+
+First, check if the current note is the Main note.  If so, return it.
+Then check all of the backlink buffers.
+Return an error if a main note cannot be found."
+
+  (let ((bfn (buffer-file-name)))
+    (if (lolh/main-note-p bfn)
+        bfn
+      (let ((blb (denote-link-return-backlinks))
+            f)
+        (or (cl-dolist (b blb) ; returns 'nil' if no Main note is found
+              (when (lolh/main-note-p b)
+                (cl-return b))) ; returns a found Main note
+            (error "Failed to find a Main note for %s" bfn))))))
+
+
+(defun lolh/note-type-to-hl (type)
+  "Input a document TYPE and return the headline to which it applies.
+
+For example, a `LEDGER' type returns the element for headline `LEDGERS'.
+If no headline is found, create it in the note tree."
+
+  (interactive
+   (list (completing-read "Enter a document type: " *lolh/doc-types* nil t nil t *lolh/doc-types*)))
+  (let ((hl (lolh/get-headline-element type)))
+    (or (message "Found the headling %s" hl)
+        (lolh/add-headline-element type))))
 
 
 (defun lolh/note-property (property &optional hl)
@@ -304,7 +391,9 @@ Return NIL if there is no PROPERTY."
 
 
 (defun lolh/get-headline-element (headline)
-  "Given the name of a HEADLINE, return the element from the note-tree."
+  "Given the name of a HEADLINE, return the element from the note-tree.
+
+TODO: What to do about possible duplicate headline names??"
 
   (org-element-map *lolh/note-tree* 'headline
     (lambda (hl) (when
@@ -313,18 +402,53 @@ Return NIL if there is no PROPERTY."
     nil t t))
 
 
-(defun lolh/put-tag-in-headline (tag headline)
-  "Put a TAG into a HEADLINE."
+(defun lolh/add-headline-element (parent-hl new-hl)
+  "Add NEW-HL as a headline in PARENT-HL.
 
-  (let* ((hl (or (lolh/get-headline-element headline)
-                 (error "Headline %s does not exist" headline)))
-         (begin (org-element-property :begin hl))
-         (tags (org-element-property :tags hl))
-         (new-tags (push tag tags)))
+Both arguments are strings.
+
+This method modifies the AST, then inserts the new headline using
+`org-element-interpret-data', and then rescans the entire buffer because
+the insertion process does not update any of the buffer positions after
+the new headline.  The benefit of this method is that there is nothing
+for the user to do and there is no need to try to get the syntax correct."
+
+  (let* ((p (lolh/get-headline-element parent-hl))
+         (pe (org-element-property :end p))(l (org-element-property :level p))
+         (e (org-element-create 'headline
+                                `(:raw-value
+                                  ,new-hl
+                                  :level
+                                  ,(1+ l)
+                                  :title
+                                  ,new-hl))))
+    (org-element-adopt-elements p e)
     (save-excursion
-      (goto-char begin)
-      (org-set-tags new-tags)))
+      (goto-char pe)
+      (insert
+       (org-element-interpret-data e))
+      (newline)))
   (lolh/note-tree))
+
+
+(Defun lolh/put-tag-in-headline (tag headline)
+       "Put a TAG into a HEADLINE."
+
+       (let* ((hl (or (lolh/get-headline-element headline)
+                      (error "Headline %s does not exist" headline)))
+              (begin (org-element-property :begin hl))
+              (tags (org-element-property :tags hl))
+              (new-tags (push tag tags)))
+         (save-excursion
+           (goto-char begin)
+           (org-set-tags new-tags)))
+       (lolh/note-tree))
+
+
+(defun lolh/add-ledger ()
+  "Rename the file in process as a ledger and add/attach it."
+
+  )
 
 
 (defun lolh/cause ()
@@ -417,16 +541,56 @@ If FILTER is set to a regexp, attach the matched files."
   (dired-unmark-all-marks)
   (delete-window))
 
+%m
+(defun lolh/def-names ()
+  "Return the fully parsed and formated defendant names."
 
-(defun lolh/first-last-name ()
-  "Return the parsed first and last name for DEF-1."
-  (let ((def-1 (lolh/note-property "DEF-1")))
-    (unless (string-match *lolh/first-last-name-re* def-1)
-      (error "Name \"%s\" appears to be malformed." def-1))
-    (let* ((first-name (match-string 1 def-1))
-           (last-name (upcase (match-string 2 def-1)))
-           (name (format "%s,%s -- " last-name first-name)))
-      name)))
+  (let (defs fl)
+    (dolist (def '("DEF-1" "DEF-2") defs)
+      (let ((name (lolh/note-property def)))
+        (if (string= "--" name)
+            (setf fl nil)
+          (if (string-match *lolh/first-last-name-re* name)
+              (setf fl (list :first
+                             (match-string 1 name)
+                             :last
+                             (match-string 2 name)))
+            (error "Name %s from %s appears to be malformed" name def)))
+        (setf defs (append defs (list def fl)))))
+    defs))
+
+
+(defun lolh/def-name (def)
+  "DEF is DEF-1 or DEF-2; return the appropriate data from DEFS plist."
+  (plist-get (lolh/def-names) def #'string=))
+
+
+(defun lolh/def-first-name (def)
+  "Return DEF's first name."
+  (plist-get (lolh/def-name def) :first))
+
+
+(defun lolh/def-last-name (def &optional capitalize)
+  "Return DEF's last name, possibly CAPITALIZE'd"
+  (let ((n (plist-get (lolh/def-name def) :last)))
+    (if (and n capitalize)
+        (upcase n)
+      n)))
+
+
+(defun lolh/def-last-first-name (def)
+  "Return a formatted reversed name."
+  (let ((ln (lolh/def-last-name def t))
+        (fn (lolh/def-first-name def)))
+    (when ln
+      (format "%s,%s" (lolh/def-last-name def t) (lolh/def-first-name def)))))
+
+
+(defun lolh/both-def-names ()
+  "Return a formatted strong of both names, reversed."
+  (let ((def1 (lolh/def-last-first-name "DEF-1"))
+        (def2 (lolh/def-last-first-name "DEF-2")))
+    (format "%s%s" def1 (if def2 (concat "-" def2) ""))))
 
 
 (defun lolh/extract-date-name (file-name &optional type)
